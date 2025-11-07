@@ -1,7 +1,7 @@
 import axios from 'axios'
 
 const apiClient = axios.create({
-    baseURL: 'http://localhost:8000/api',
+    baseURL: 'https://p01--eventify--6qgvyb9b2y9f.code.run/api',
     withCredentials: true
 });
 
