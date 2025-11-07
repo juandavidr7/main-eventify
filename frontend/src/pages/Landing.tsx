@@ -1,6 +1,7 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Calendar, Users, Sparkles, ArrowRight, Bell, MessageSquare, Star as StarIcon, Search, Zap, Target, TrendingUp, Music, Moon, Drama, Plane, Heart, Gamepad2, Briefcase, UtensilsCrossed } from "lucide-react";
+import { Calendar, Users, Sparkles, ArrowRight, Bell, MessageSquare, Star as StarIcon, Search, Zap, Target, TrendingUp, Music, Moon, Drama, Plane, Heart, Gamepad2, Briefcase, UtensilsCrossed, GraduationCap, Palette } from "lucide-react";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
 import EventCard from "@/components/events/EventCard";
@@ -9,8 +10,8 @@ import { useScrollReveal } from "@/hooks/use-scroll-reveal";
 import { AnimatedCounter, AnimatedTitle, StaggeredCards } from "@/components/animations";
 import heroImage from "@/assets/hero-image.jpg";
 import studentsCollaboration from "@/assets/students-collaboration.jpg";
-import { useEffect, useState } from "react";
-import { getUsersCountRequest } from "@/api/users";
+import { getEventosStatsRequest, getUsuariosStatsRequest, getCategoriasStatsRequest, getEventosRequest, getCategoriasRequest } from "@/api/auth";
+import { getCategoryIcon } from "@/utils/categoryIcons";
 
 const ScrollRevealSection = ({ children, className = "", direction = "up" }: { 
   children: React.ReactNode; 
@@ -38,22 +39,213 @@ const ScrollRevealSection = ({ children, className = "", direction = "up" }: {
   );
 };
 
+// Interface para eventos del backend
+interface EventoBackend {
+  id: number;
+  titulo: string;
+  descripcion: string;
+  fecha_inicio: string;
+  fecha_fin: string;
+  aforo: number;
+  ubicacion: string;
+  foto: string | null;
+  categoria: {
+    id: number;
+    nombre: string;
+  } | null;
+  numero_inscritos: number;
+}
+
+// Interface para eventos mapeados para EventCard
+interface FeaturedEvent {
+  id: string;
+  title: string;
+  category: string;
+  date: string;
+  time: string;
+  location: string;
+  capacity: number;
+  registered: number;
+  image?: string;
+}
+
+// Interface para categorías
+interface Categoria {
+  id: number;
+  nombre: string;
+}
+
 const Landing = () => {
-  const featuredEvents = mockEvents.slice(0, 3);
-  const [usuariosRegistrados, setUsuariosRegistrados] = useState(0);
-  const [totalEvents, setTotalEvents] = useState(0);
+  const navigate = useNavigate();
+  
+  // Estados para las estadísticas
+  const [eventosStats, setEventosStats] = useState({ total_eventos: 0, eventos_proximos: 0 });
+  const [usuariosStats, setUsuariosStats] = useState({ total_usuarios: 0 });
+  const [categoriasStats, setCategoriasStats] = useState({ total_categorias: 0 });
+  
+  // Estado para eventos destacados (los 3 con mayor número de inscritos)
+  const [featuredEvents, setFeaturedEvents] = useState<FeaturedEvent[]>([]);
+  const [loadingEvents, setLoadingEvents] = useState(true);
+  
+  // Estado para categorías
+  const [categorias, setCategorias] = useState<Categoria[]>([]);
+  const [loadingCategorias, setLoadingCategorias] = useState(true);
+
+  // Cargar estadísticas al montar el componente
   useEffect(() => {
-    const fetchUsersCount = async () => {
+    const fetchStats = async () => {
       try {
-        const response = await getUsersCountRequest();
-        setUsuariosRegistrados(response.data.total);
-        setTotalEvents(response.data.total_events);
+        // Hacer las tres llamadas en paralelo
+        const [eventosResponse, usuariosResponse, categoriasResponse] = await Promise.all([
+          getEventosStatsRequest(),
+          getUsuariosStatsRequest(),
+          getCategoriasStatsRequest()
+        ]);
+        
+        console.log('📊 Respuesta de eventos:', eventosResponse.data);
+        console.log('👥 Respuesta de usuarios:', usuariosResponse.data);
+        console.log('📁 Respuesta de categorías:', categoriasResponse.data);
+        
+        // Verificar que los datos tengan la estructura correcta
+        if (eventosResponse.data) {
+          const eventosData = {
+            total_eventos: eventosResponse.data.total_eventos ?? 0,
+            eventos_proximos: eventosResponse.data.eventos_proximos ?? 0
+          };
+          console.log('✅ Estableciendo eventosStats:', eventosData);
+          setEventosStats(eventosData);
+        }
+        
+        if (usuariosResponse.data) {
+          const usuariosData = {
+            total_usuarios: usuariosResponse.data.total_usuarios ?? 0
+          };
+          console.log('✅ Estableciendo usuariosStats:', usuariosData);
+          setUsuariosStats(usuariosData);
+        }
+        
+        if (categoriasResponse.data) {
+          const categoriasData = {
+            total_categorias: categoriasResponse.data.total_categorias ?? 0
+          };
+          console.log('✅ Estableciendo categoriasStats:', categoriasData);
+          setCategoriasStats(categoriasData);
+        }
       } catch (error) {
-        console.error('Error al obtener el contador de usuarios:', error);
+        console.error('Error al cargar estadísticas:', error);
+        console.error('Detalles del error:', error.response?.data || error.message);
+        // Mantener valores por defecto en caso de error
       }
     };
-  fetchUsersCount();
+
+    fetchStats();
   }, []);
+
+  // Funciones helper para formatear datos del backend
+  // Formatear fecha: "2024-01-15T14:30:00Z" → "15 de enero, 2024"
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('es-ES', { 
+      day: 'numeric', 
+      month: 'long', 
+      year: 'numeric' 
+    });
+  };
+
+  // Extraer hora: "2024-01-15T14:30:00Z" → "14:30"
+  const formatTime = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleTimeString('es-ES', { 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+  };
+
+  // Construir URL de imagen
+  const getImageUrl = (foto: string | null) => {
+    if (!foto) return undefined;
+    if (foto.startsWith('http')) return foto;
+    return `http://localhost:8000${foto}`;
+  };
+
+  // Cargar eventos destacados (3 con mayor número de inscritos)
+  useEffect(() => {
+    const fetchFeaturedEvents = async () => {
+      try {
+        setLoadingEvents(true);
+        // Paso 1: Obtener todos los eventos del backend
+        const response = await getEventosRequest();
+        const eventosData = response.data.results || response.data;
+        const eventos = Array.isArray(eventosData) ? eventosData : [];
+        
+        // Paso 2: Ordenar por número de inscritos (mayor a menor)
+        const eventosOrdenados = eventos
+          .sort((a: EventoBackend, b: EventoBackend) => 
+            (b.numero_inscritos || 0) - (a.numero_inscritos || 0)
+          );
+        
+        // Paso 3: Tomar solo los primeros 3
+        const top3Eventos = eventosOrdenados.slice(0, 3);
+        
+        // Paso 4: Mapear al formato que espera EventCard
+        const eventosMapeados = top3Eventos.map((evento: EventoBackend) => ({
+          id: evento.id.toString(),
+          title: evento.titulo,
+          category: evento.categoria?.nombre || "Sin categoría",
+          date: formatDate(evento.fecha_inicio),
+          time: formatTime(evento.fecha_inicio),
+          location: evento.ubicacion,
+          capacity: evento.aforo,
+          registered: evento.numero_inscritos || 0,
+          image: getImageUrl(evento.foto)
+        }));
+        
+        setFeaturedEvents(eventosMapeados);
+      } catch (error) {
+        console.error('Error al cargar eventos destacados:', error);
+        // En caso de error, usar eventos mock como fallback
+        setFeaturedEvents(mockEvents.slice(0, 3).map(event => ({
+          id: event.id,
+          title: event.title,
+          category: event.category,
+          date: event.dateStart,
+          time: event.time,
+          location: event.location,
+          capacity: event.capacity,
+          registered: event.registered,
+          image: event.image
+        })));
+      } finally {
+        setLoadingEvents(false);
+      }
+    };
+
+    fetchFeaturedEvents();
+  }, []);
+
+  // Cargar categorías del backend
+  useEffect(() => {
+    const fetchCategorias = async () => {
+      try {
+        setLoadingCategorias(true);
+        const response = await getCategoriasRequest();
+        const categoriasData = response.data.results || response.data;
+        setCategorias(Array.isArray(categoriasData) ? categoriasData : []);
+      } catch (error) {
+        console.error('Error al cargar categorías:', error);
+        setCategorias([]);
+      } finally {
+        setLoadingCategorias(false);
+      }
+    };
+
+    fetchCategorias();
+  }, []);
+
+  // Función para manejar click en categoría
+  const handleCategoryClick = (categoriaId: number) => {
+    navigate(`/eventos?categoria=${categoriaId}`);
+  };
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -117,7 +309,7 @@ const Landing = () => {
               <div className="text-center">
                 <div className="flex items-center justify-center gap-2 mb-2">
                   <AnimatedCounter 
-                    end={totalEvents}
+                    end={eventosStats.total_eventos || 0}
                     suffix="+"
                     className="text-4xl md:text-5xl font-extrabold text-white drop-shadow-lg"
                   />
@@ -128,7 +320,7 @@ const Landing = () => {
               <div className="text-center">
                 <div className="flex items-center justify-center gap-2 mb-2">
                   <AnimatedCounter 
-                    end={usuariosRegistrados}
+                    end={usuariosStats.total_usuarios || 0}
                     suffix="+"
                     className="text-4xl md:text-5xl font-extrabold text-white drop-shadow-lg"
                   />
@@ -156,7 +348,7 @@ const Landing = () => {
               <div className="relative overflow-hidden rounded-3xl p-10 text-center hover-lift gradient-primary shadow-xl">
                 <Calendar className="h-14 w-14 mx-auto mb-4 text-white animate-float" />
                 <AnimatedCounter 
-                  end={48}
+                  end={eventosStats.eventos_proximos || 0}
                   className="text-5xl font-extrabold text-white mb-2"
                 />
                 <div className="text-lg text-white/90 font-medium">Eventos próximos</div>
@@ -167,7 +359,7 @@ const Landing = () => {
               <div className="relative overflow-hidden rounded-3xl p-10 text-center hover-lift shadow-xl" style={{ background: 'linear-gradient(135deg, hsl(260 75% 60%) 0%, hsl(270 70% 65%) 100%)' }}>
                 <Users className="h-14 w-14 mx-auto mb-4 text-white animate-float" style={{ animationDelay: '0.5s' }} />
                 <AnimatedCounter 
-                  end={usuariosRegistrados}
+                  end={usuariosStats.total_usuarios || 0}
                   suffix="+"
                   className="text-5xl font-extrabold text-white mb-2"
                 />
@@ -179,7 +371,7 @@ const Landing = () => {
               <div className="relative overflow-hidden rounded-3xl p-10 text-center hover-lift shadow-xl" style={{ background: 'linear-gradient(135deg, hsl(160 75% 50%) 0%, hsl(170 70% 55%) 100%)' }}>
                 <Zap className="h-14 w-14 mx-auto mb-4 text-white animate-float" style={{ animationDelay: '1s' }} />
                 <AnimatedCounter 
-                  end={6}
+                  end={categoriasStats.total_categorias || 0}
                   className="text-5xl font-extrabold text-white mb-2"
                   duration={1500}
                 />
@@ -193,7 +385,7 @@ const Landing = () => {
             <div className="text-center mb-10">
               <h3 className="text-2xl md:text-3xl font-extrabold text-foreground mb-2">
                 Explora por{" "}
-                <span className="bg-gradient-primary bg-clip-text text-transparent">
+                <span className="text-2xl md:text-3xl font-extrabold text-foreground mb-2">
                   Categoría
                 </span>
               </h3>
@@ -201,79 +393,42 @@ const Landing = () => {
             </div>
           </ScrollRevealSection>
 
-          <div className="flex flex-wrap justify-center gap-6 md:gap-10">
-            <ScrollRevealSection direction="scale">
-              <div className="flex flex-col items-center group cursor-pointer">
-                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center mb-2 group-hover:scale-110 group-hover:shadow-xl transition-all duration-300 border-2 border-primary/20 group-hover:border-primary">
-                  <Music className="h-8 w-8 text-primary" />
-                </div>
-                <span className="text-xs font-semibold text-foreground/80 group-hover:text-primary transition-colors">Música</span>
-              </div>
-            </ScrollRevealSection>
+          {loadingCategorias ? (
+            <div className="text-center py-8">
+              <p className="text-muted-foreground">Cargando categorías...</p>
+            </div>
+          ) : (
+            <div className="flex flex-wrap justify-center gap-6 md:gap-10">
+              {categorias.map((categoria) => {
+                const { icon: Icon, color } = getCategoryIcon(categoria.nombre);
+                const colorClasses = {
+                  primary: "from-primary/20 to-primary/10 border-primary/20 group-hover:border-primary text-primary",
+                  secondary: "from-secondary/20 to-secondary/10 border-secondary/20 group-hover:border-secondary text-secondary",
+                  accent: "from-accent/20 to-accent/10 border-accent/20 group-hover:border-accent text-accent"
+                };
 
-            <ScrollRevealSection direction="scale">
-              <div className="flex flex-col items-center group cursor-pointer">
-                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-secondary/20 to-secondary/10 flex items-center justify-center mb-2 group-hover:scale-110 group-hover:shadow-xl transition-all duration-300 border-2 border-secondary/20 group-hover:border-secondary">
-                  <Moon className="h-8 w-8 text-secondary" />
-                </div>
-                <span className="text-xs font-semibold text-foreground/80 group-hover:text-secondary transition-colors">Vida nocturna</span>
-              </div>
-            </ScrollRevealSection>
-
-            <ScrollRevealSection direction="scale">
-              <div className="flex flex-col items-center group cursor-pointer">
-                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-accent/20 to-accent/10 flex items-center justify-center mb-2 group-hover:scale-110 group-hover:shadow-xl transition-all duration-300 border-2 border-accent/20 group-hover:border-accent">
-                  <Drama className="h-8 w-8 text-accent" />
-                </div>
-                <span className="text-xs font-semibold text-foreground/80 group-hover:text-accent transition-colors">Artes escénicas</span>
-              </div>
-            </ScrollRevealSection>
-
-            <ScrollRevealSection direction="scale">
-              <div className="flex flex-col items-center group cursor-pointer">
-                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center mb-2 group-hover:scale-110 group-hover:shadow-xl transition-all duration-300 border-2 border-primary/20 group-hover:border-primary">
-                  <Plane className="h-8 w-8 text-primary" />
-                </div>
-                <span className="text-xs font-semibold text-foreground/80 group-hover:text-primary transition-colors">Vacaciones</span>
-              </div>
-            </ScrollRevealSection>
-
-            <ScrollRevealSection direction="scale">
-              <div className="flex flex-col items-center group cursor-pointer">
-                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-secondary/20 to-secondary/10 flex items-center justify-center mb-2 group-hover:scale-110 group-hover:shadow-xl transition-all duration-300 border-2 border-secondary/20 group-hover:border-secondary">
-                  <Heart className="h-8 w-8 text-secondary" />
-                </div>
-                <span className="text-xs font-semibold text-foreground/80 group-hover:text-secondary transition-colors">Citas</span>
-              </div>
-            </ScrollRevealSection>
-
-            <ScrollRevealSection direction="scale">
-              <div className="flex flex-col items-center group cursor-pointer">
-                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-accent/20 to-accent/10 flex items-center justify-center mb-2 group-hover:scale-110 group-hover:shadow-xl transition-all duration-300 border-2 border-accent/20 group-hover:border-accent">
-                  <Gamepad2 className="h-8 w-8 text-accent" />
-                </div>
-                <span className="text-xs font-semibold text-foreground/80 group-hover:text-accent transition-colors">Aficiones</span>
-              </div>
-            </ScrollRevealSection>
-
-            <ScrollRevealSection direction="scale">
-              <div className="flex flex-col items-center group cursor-pointer">
-                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center mb-2 group-hover:scale-110 group-hover:shadow-xl transition-all duration-300 border-2 border-primary/20 group-hover:border-primary">
-                  <Briefcase className="h-8 w-8 text-primary" />
-                </div>
-                <span className="text-xs font-semibold text-foreground/80 group-hover:text-primary transition-colors">Negocios</span>
-              </div>
-            </ScrollRevealSection>
-
-            <ScrollRevealSection direction="scale">
-              <div className="flex flex-col items-center group cursor-pointer">
-                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-secondary/20 to-secondary/10 flex items-center justify-center mb-2 group-hover:scale-110 group-hover:shadow-xl transition-all duration-300 border-2 border-secondary/20 group-hover:border-secondary">
-                  <UtensilsCrossed className="h-8 w-8 text-secondary" />
-                </div>
-                <span className="text-xs font-semibold text-foreground/80 group-hover:text-secondary transition-colors">Gastronomía</span>
-              </div>
-            </ScrollRevealSection>
-          </div>
+                return (
+                  <ScrollRevealSection key={categoria.id} direction="scale">
+                    <div 
+                      className="flex flex-col items-center group cursor-pointer"
+                      onClick={() => handleCategoryClick(categoria.id)}
+                    >
+                      <div className={`w-20 h-20 rounded-full bg-gradient-to-br flex items-center justify-center mb-2 group-hover:scale-110 group-hover:shadow-xl transition-all duration-300 border-2 ${colorClasses[color]}`}>
+                        <Icon className="h-8 w-8" />
+                      </div>
+                      <span className={`text-xs font-semibold text-foreground/80 transition-colors ${
+                        color === "primary" ? "group-hover:text-primary" :
+                        color === "secondary" ? "group-hover:text-secondary" :
+                        "group-hover:text-accent"
+                      }`}>
+                        {categoria.nombre}
+                      </span>
+                    </div>
+                  </ScrollRevealSection>
+                );
+              })}
+            </div>
+          )}
         </div>
       </section>
 
@@ -288,7 +443,7 @@ const Landing = () => {
               </div>
               <h2 className="text-4xl md:text-5xl font-extrabold text-foreground">
                 Características{" "}
-                <span className="bg-gradient-primary bg-clip-text text-transparent">
+                <span className="text-4xl md:text-5xl font-extrabold text-foreground">
                   principales
                 </span>
               </h2>
@@ -374,7 +529,7 @@ const Landing = () => {
                 </div>
                 <h2 className="text-4xl md:text-5xl font-extrabold mb-3 text-foreground">
                   Los más{" "}
-                  <span className="bg-gradient-primary bg-clip-text text-transparent">
+                  <span className="text-4xl md:text-5xl font-extrabold mb-3 text-foreground">
                     populares
                   </span>
                 </h2>
@@ -391,23 +546,33 @@ const Landing = () => {
             </div>
           </ScrollRevealSection>
           
-          <div className="grid md:grid-cols-3 gap-8">
-            {featuredEvents.map((event) => (
-              <ScrollRevealSection key={event.id} direction="scale">
-                <EventCard
-                  id={event.id}
-                  title={event.title}
-                  category={event.category}
-                  date={event.dateStart}
-                  time={event.time}
-                  location={event.location}
-                  capacity={event.capacity}
-                  registered={event.registered}
-                  image={event.image}
-                />
-              </ScrollRevealSection>
-            ))}
-          </div>
+          {loadingEvents ? (
+            <div className="text-center py-16">
+              <p className="text-muted-foreground">Cargando eventos destacados...</p>
+            </div>
+          ) : featuredEvents.length > 0 ? (
+            <div className="grid md:grid-cols-3 gap-8">
+              {featuredEvents.map((event) => (
+                <ScrollRevealSection key={event.id} direction="scale">
+                  <EventCard
+                    id={event.id}
+                    title={event.title}
+                    category={event.category}
+                    date={event.date}
+                    time={event.time}
+                    location={event.location}
+                    capacity={event.capacity}
+                    registered={event.registered}
+                    image={event.image}
+                  />
+                </ScrollRevealSection>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-16">
+              <p className="text-muted-foreground">No hay eventos disponibles</p>
+            </div>
+          )}
           
           <div className="text-center mt-12">
             <Button 
@@ -447,7 +612,7 @@ const Landing = () => {
                 </div>
                 <h2 className="text-4xl md:text-5xl font-extrabold text-foreground">
                   Conecta con{" "}
-                  <span className="bg-gradient-secondary bg-clip-text text-transparent">
+                  <span className="text-4xl md:text-5xl font-extrabold text-foreground">
                     tu comunidad
                   </span>
                 </h2>
